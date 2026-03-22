@@ -1,8 +1,22 @@
 import pandas as pd
 from .core_utils import get_indian_fy
 
+def clean_zerodha_equity(file):
+    try:
+        raw_df = pd.read_csv(file, header=None, skip_blank_lines=True)
+    except Exception:
+        raw_df = pd.read_excel(file, header=None)
+
+    mask = raw_df.astype(str).apply(lambda x: x.str.contains('Trade Date', case=False, na=False)).any(axis=1)
+    if not mask.any(): raise ValueError("Could not find 'Trade Date' header.")
+        
+    header_idx = mask.idxmax()
+    raw_df.columns = raw_df.iloc[header_idx].astype(str).str.strip()
+    clean_df = raw_df.iloc[header_idx + 1:].reset_index(drop=True)
+    return clean_df.dropna(axis=1, how='all').dropna(subset=['Trade Date'])
+
 def process_equity_fifo(df, client_pan):
-    df['Trade Date'] = pd.to_datetime(df['Trade Date'], errors='coerce')
+    df['Trade Date'] = pd.to_datetime(df['Trade Date'].astype(str).str.strip().str.split('T').str[0], errors='coerce')
     df = df.sort_values(['Symbol', 'Trade Date']).reset_index(drop=True)
     
     realized_trades = []
@@ -32,8 +46,7 @@ def process_equity_fifo(df, client_pan):
 
                 realized_trades.append({
                     'PAN': client_pan, 'Symbol': sym, 'Buy Date': buy['d'], 'Sell Date': t_date,
-                    'Qty': m_q, 'Buy Price': buy['p'], 'Sell Price': p,
-                    'Realized P&L': round(m_q * (p - buy['p']), 2), 
+                    'Qty': m_q, 'Realized P&L': round(m_q * (p - buy['p']), 2), 
                     'Category': cat, 'Rate (%)': rate, 'FY': get_indian_fy(t_date)
                 })
 
@@ -45,4 +58,5 @@ def process_equity_fifo(df, client_pan):
 
 def merge_equity_ledgers(old_df, new_df):
     if old_df.empty: return new_df
+    if new_df.empty: return old_df
     return pd.concat([old_df, new_df], ignore_index=True).drop_duplicates().reset_index(drop=True)
