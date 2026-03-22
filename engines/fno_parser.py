@@ -24,11 +24,16 @@ def process_fno_tradebook(df):
 def merge_fno_ledgers(old_df, new_df):
     if old_df.empty: return new_df
     combined = pd.concat([old_df, new_df], ignore_index=True)
+    
+    # --- THE FIX: Force all dates into a unified datetime format before sorting ---
+    combined['Last_Trade_Date'] = pd.to_datetime(combined['Last_Trade_Date'], errors='coerce')
+    
     merged = combined.groupby('Symbol').agg(
         Net_Quantity=('Net_Quantity', 'sum'),
         Total_Cash_Flow=('Total_Cash_Flow', 'sum'),
         Last_Trade_Date=('Last_Trade_Date', 'max')
     ).reset_index()
+    
     merged['Status'] = np.where(merged['Net_Quantity'] == 0, 'Closed', 'Open')
     merged['Financial Year'] = merged['Last_Trade_Date'].apply(get_indian_fy)
     return merged
