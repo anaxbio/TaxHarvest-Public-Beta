@@ -2,8 +2,23 @@ import pandas as pd
 import numpy as np
 from .core_utils import get_indian_fy
 
+def clean_zerodha_fno(file):
+    try:
+        raw_df = pd.read_csv(file, header=None, skip_blank_lines=True)
+    except Exception:
+        raw_df = pd.read_excel(file, header=None)
+
+    anchor_row_series = raw_df.astype(str).apply(lambda x: x.str.contains('Trade Date', case=False, na=False)).any(axis=1)
+    if not anchor_row_series.any():
+        raise ValueError("Could not find 'Trade Date'. Please ensure it is a raw F&O Tradebook.")
+        
+    header_idx = anchor_row_series.idxmax()
+    raw_df.columns = raw_df.iloc[header_idx].astype(str).str.strip()
+    clean_df = raw_df.iloc[header_idx + 1:].reset_index(drop=True)
+    return clean_df.dropna(axis=1, how='all').dropna(subset=['Trade Date'])
+
 def process_fno_tradebook(df, client_pan):
-    df['Trade Date'] = pd.to_datetime(df['Trade Date'], errors='coerce')
+    df['Trade Date'] = pd.to_datetime(df['Trade Date'].astype(str).str.strip().str.split('T').str[0], errors='coerce')
     df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
     df['Price'] = pd.to_numeric(df['Price'], errors='coerce').fillna(0)
     df['Trade Type'] = df['Trade Type'].astype(str).str.strip().str.lower()
@@ -20,14 +35,17 @@ def process_fno_tradebook(df, client_pan):
     
     grouped['Status'] = np.where(grouped['Net_Quantity'] == 0, 'Closed', 'Open')
     grouped['Financial Year'] = grouped['Last_Trade_Date'].apply(get_indian_fy)
-    grouped['PAN'] = client_pan  # Tag the portfolio
+    grouped['PAN'] = client_pan
     return grouped
 
 def merge_fno_ledgers(old_df, new_df):
     if old_df.empty: return new_df
-    combined = pd.concat([old_df, new_df], ignore_index=True)
-    combined['Last_Trade_Date'] = pd.to_datetime(combined['Last_Trade_Date'], errors='coerce')
+    if new_df.empty: return old_df
     
+    old_df['Last_Trade_Date'] = pd.to_datetime(old_df['Last_Trade_Date'], errors='coerce')
+    new_df['Last_Trade_Date'] = pd.to_datetime(new_df['Last_Trade_Date'], errors='coerce')
+
+    combined = pd.concat([old_df, new_df], ignore_index=True)
     merged = combined.groupby(['PAN', 'Symbol']).agg(
         Net_Quantity=('Net_Quantity', 'sum'),
         Total_Cash_Flow=('Total_Cash_Flow', 'sum'),
