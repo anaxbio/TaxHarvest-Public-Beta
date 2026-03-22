@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from .core_utils import get_indian_fy
 
-def process_fno_tradebook(df):
+def process_fno_tradebook(df, client_pan):
     df['Trade Date'] = pd.to_datetime(df['Trade Date'], errors='coerce')
     df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
     df['Price'] = pd.to_numeric(df['Price'], errors='coerce').fillna(0)
@@ -14,24 +14,25 @@ def process_fno_tradebook(df):
     grouped = df.groupby('Symbol').agg(
         Net_Quantity=('Signed Qty', 'sum'),
         Total_Cash_Flow=('Cash Flow', 'sum'),
-        Last_Trade_Date=('Trade Date', 'max')
+        Last_Trade_Date=('Trade Date', 'max'),
+        Total_Trades=('Trade Date', 'count')
     ).reset_index()
     
     grouped['Status'] = np.where(grouped['Net_Quantity'] == 0, 'Closed', 'Open')
     grouped['Financial Year'] = grouped['Last_Trade_Date'].apply(get_indian_fy)
+    grouped['PAN'] = client_pan  # Tag the portfolio
     return grouped
 
 def merge_fno_ledgers(old_df, new_df):
     if old_df.empty: return new_df
     combined = pd.concat([old_df, new_df], ignore_index=True)
-    
-    # --- THE FIX: Force all dates into a unified datetime format before sorting ---
     combined['Last_Trade_Date'] = pd.to_datetime(combined['Last_Trade_Date'], errors='coerce')
     
-    merged = combined.groupby('Symbol').agg(
+    merged = combined.groupby(['PAN', 'Symbol']).agg(
         Net_Quantity=('Net_Quantity', 'sum'),
         Total_Cash_Flow=('Total_Cash_Flow', 'sum'),
-        Last_Trade_Date=('Last_Trade_Date', 'max')
+        Last_Trade_Date=('Last_Trade_Date', 'max'),
+        Total_Trades=('Total_Trades', 'sum')
     ).reset_index()
     
     merged['Status'] = np.where(merged['Net_Quantity'] == 0, 'Closed', 'Open')
