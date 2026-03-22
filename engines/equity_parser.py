@@ -1,7 +1,7 @@
 import pandas as pd
 from .core_utils import get_indian_fy
 
-def process_equity_fifo(df):
+def process_equity_fifo(df, client_pan):
     df['Trade Date'] = pd.to_datetime(df['Trade Date'], errors='coerce')
     df = df.sort_values(['Symbol', 'Trade Date']).reset_index(drop=True)
     
@@ -31,8 +31,9 @@ def process_equity_fifo(df):
                     rate, cat = (20.0, "STCG") if t_date >= cutoff else (15.0, "STCG")
 
                 realized_trades.append({
-                    'Symbol': sym, 'Buy Date': buy['d'], 'Sell Date': t_date,
-                    'Qty': m_q, 'Realized P&L': round(m_q * (p - buy['p']), 2), 
+                    'PAN': client_pan, 'Symbol': sym, 'Buy Date': buy['d'], 'Sell Date': t_date,
+                    'Qty': m_q, 'Buy Price': buy['p'], 'Sell Price': p,
+                    'Realized P&L': round(m_q * (p - buy['p']), 2), 
                     'Category': cat, 'Rate (%)': rate, 'FY': get_indian_fy(t_date)
                 })
 
