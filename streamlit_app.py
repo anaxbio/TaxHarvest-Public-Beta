@@ -1,11 +1,10 @@
 import streamlit as st
 import pandas as pd
 import json
-from engines.core_utils import clean_zerodha_tradebook
-from engines.fno_parser import process_fno_tradebook, merge_fno_ledgers
-from engines.equity_parser import process_equity_fifo, merge_equity_ledgers
+from engines.fno_parser import clean_zerodha_fno, process_fno_tradebook, merge_fno_ledgers
+from engines.equity_parser import clean_zerodha_equity, process_equity_fifo, merge_equity_ledgers
 
-st.set_page_config(page_title="TaxHarvest Pro", layout="wide", page_icon="⚖️")
+st.set_page_config(page_title="TaxHarvest Beta", layout="wide", page_icon="⚖️")
 
 # --- CSS FIX: Visible Dark Text on White Metric Cards ---
 st.markdown("""
@@ -15,11 +14,9 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- VAULT INITIALIZATION ---
 if 'master_vault' not in st.session_state:
     st.session_state.master_vault = {"fno_ledger": [], "equity_ledger": []}
 
-# --- SIDEBAR: CLIENT & VAULT MANAGEMENT ---
 st.sidebar.title("🔐 Master Vault")
 vault_file = st.sidebar.file_uploader("Restore Vault (.json)", type=['json'])
 
@@ -34,14 +31,13 @@ st.sidebar.divider()
 active_pan = st.sidebar.text_input("Active Client/PAN", value="DEFAULT_PAN").upper()
 module = st.sidebar.radio("Navigate", ["📈 F&O Audit", "🏛️ Equity (FIFO)"])
 
-# --- MODULE 1: F&O ---
 if module == "📈 F&O Audit":
     st.title(f"Derivatives Audit | PAN: {active_pan}")
     
     files = st.file_uploader("Upload F&O Tradebook", type=['csv', 'xlsx'], accept_multiple_files=True)
     if files:
         old_fno = pd.DataFrame(st.session_state.master_vault.get("fno_ledger", []))
-        new_list = [process_fno_tradebook(clean_zerodha_tradebook(f), active_pan) for f in files]
+        new_list = [process_fno_tradebook(clean_zerodha_fno(f), active_pan) for f in files]
         merged = merge_fno_ledgers(old_fno, pd.concat(new_list))
         merged['Last_Trade_Date'] = merged['Last_Trade_Date'].astype(str)
         st.session_state.master_vault["fno_ledger"] = merged.to_dict(orient="records")
@@ -61,14 +57,13 @@ if module == "📈 F&O Audit":
             c2.metric("Open Contracts", len(disp_df[disp_df['Status'] == 'Open']))
             st.dataframe(disp_df, use_container_width=True)
 
-# --- MODULE 2: EQUITY ---
 elif module == "🏛️ Equity (FIFO)":
     st.title(f"Capital Gains Engine | PAN: {active_pan}")
     
     files = st.file_uploader("Upload Equity Tradebook", type=['csv', 'xlsx'], accept_multiple_files=True)
     if files:
         old_eq = pd.DataFrame(st.session_state.master_vault.get("equity_ledger", []))
-        new_list = [process_equity_fifo(clean_zerodha_tradebook(f), active_pan) for f in files]
+        new_list = [process_equity_fifo(clean_zerodha_equity(f), active_pan) for f in files]
         merged = merge_equity_ledgers(old_eq, pd.concat(new_list))
         merged['Buy Date'] = merged['Buy Date'].astype(str)
         merged['Sell Date'] = merged['Sell Date'].astype(str)
