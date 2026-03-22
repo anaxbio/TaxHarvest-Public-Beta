@@ -1,35 +1,47 @@
 import streamlit as st
 import pandas as pd
 import json
-from datetime import datetime
 from engines.core_utils import clean_zerodha_tradebook
 from engines.fno_parser import process_fno_tradebook, merge_fno_ledgers
 from engines.equity_parser import process_equity_fifo, merge_equity_ledgers
 
-st.set_page_config(page_title="TaxHarvest Beta", layout="wide", page_icon="⚖️")
+st.set_page_config(page_title="TaxHarvest Pro", layout="wide", page_icon="⚖️")
 
+# --- CSS FIX: Visible Dark Text on White Metric Cards ---
+st.markdown("""
+    <style>
+    [data-testid="stMetric"] { background-color: #ffffff !important; padding: 15px; border-radius: 10px; border: 1px solid #e0e0e0; }
+    [data-testid="stMetricValue"], [data-testid="stMetricLabel"] { color: #1f2937 !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- VAULT INITIALIZATION ---
 if 'master_vault' not in st.session_state:
     st.session_state.master_vault = {"fno_ledger": [], "equity_ledger": []}
 
+# --- SIDEBAR: CLIENT & VAULT MANAGEMENT ---
 st.sidebar.title("🔐 Master Vault")
-vault_file = st.sidebar.file_uploader("Upload Vault (.json)", type=['json'])
+vault_file = st.sidebar.file_uploader("Restore Vault (.json)", type=['json'])
 
 if vault_file:
     try:
         st.session_state.master_vault = json.load(vault_file)
-        st.sidebar.success("Vault Loaded!")
+        st.sidebar.success("Vault Restored!")
     except:
         st.sidebar.error("Invalid Vault Format")
 
-module = st.sidebar.radio("Navigate", ["📈 F&O", "🏛️ Equity (FIFO)"])
+st.sidebar.divider()
+active_pan = st.sidebar.text_input("Active Client/PAN", value="DEFAULT_PAN").upper()
+module = st.sidebar.radio("Navigate", ["📈 F&O Audit", "🏛️ Equity (FIFO)"])
 
-if module == "📈 F&O":
-    st.title("Derivatives Audit (F&O)")
-    old_fno = pd.DataFrame(st.session_state.master_vault.get("fno_ledger", []))
-    files = st.file_uploader("Upload F&O Tradebook", type=['csv', 'xlsx'], accept_multiple_files=True)
+# --- MODULE 1: F&O ---
+if module == "📈 F&O Audit":
+    st.title(f"Derivatives Audit | PAN: {active_pan}")
     
+    files = st.file_uploader("Upload F&O Tradebook", type=['csv', 'xlsx'], accept_multiple_files=True)
     if files:
-        new_list = [process_fno_tradebook(clean_zerodha_tradebook(f)) for f in files]
+        old_fno = pd.DataFrame(st.session_state.master_vault.get("fno_ledger", []))
+        new_list = [process_fno_tradebook(clean_zerodha_tradebook(f), active_pan) for f in files]
         merged = merge_fno_ledgers(old_fno, pd.concat(new_list))
         merged['Last_Trade_Date'] = merged['Last_Trade_Date'].astype(str)
         st.session_state.master_vault["fno_ledger"] = merged.to_dict(orient="records")
@@ -37,17 +49,26 @@ if module == "📈 F&O":
 
     fno_df = pd.DataFrame(st.session_state.master_vault["fno_ledger"])
     if not fno_df.empty:
-        pnl = fno_df[fno_df['Status'] == 'Closed']['Total_Cash_Flow'].sum()
-        st.metric("Realized F&O P&L", f"₹{pnl:,.2f}")
-        st.dataframe(fno_df, use_container_width=True)
+        client_fno = fno_df[fno_df['PAN'] == active_pan]
+        if not client_fno.empty:
+            fys = ["All"] + sorted(client_fno['Financial Year'].unique().tolist(), reverse=True)
+            sel_fy = st.selectbox("Filter by Financial Year", fys)
+            disp_df = client_fno if sel_fy == "All" else client_fno[client_fno['Financial Year'] == sel_fy]
+            
+            pnl = disp_df[disp_df['Status'] == 'Closed']['Total_Cash_Flow'].sum()
+            c1, c2 = st.columns(2)
+            c1.metric("Realized F&O P&L", f"₹{pnl:,.2f}")
+            c2.metric("Open Contracts", len(disp_df[disp_df['Status'] == 'Open']))
+            st.dataframe(disp_df, use_container_width=True)
 
+# --- MODULE 2: EQUITY ---
 elif module == "🏛️ Equity (FIFO)":
-    st.title("Capital Gains Engine (FIFO)")
-    old_eq = pd.DataFrame(st.session_state.master_vault.get("equity_ledger", []))
-    files = st.file_uploader("Upload Equity Tradebook", type=['csv', 'xlsx'], accept_multiple_files=True)
+    st.title(f"Capital Gains Engine | PAN: {active_pan}")
     
+    files = st.file_uploader("Upload Equity Tradebook", type=['csv', 'xlsx'], accept_multiple_files=True)
     if files:
-        new_list = [process_equity_fifo(clean_zerodha_tradebook(f)) for f in files]
+        old_eq = pd.DataFrame(st.session_state.master_vault.get("equity_ledger", []))
+        new_list = [process_equity_fifo(clean_zerodha_tradebook(f), active_pan) for f in files]
         merged = merge_equity_ledgers(old_eq, pd.concat(new_list))
         merged['Buy Date'] = merged['Buy Date'].astype(str)
         merged['Sell Date'] = merged['Sell Date'].astype(str)
@@ -56,12 +77,18 @@ elif module == "🏛️ Equity (FIFO)":
 
     eq_df = pd.DataFrame(st.session_state.master_vault["equity_ledger"])
     if not eq_df.empty:
-        stcg = eq_df[eq_df['Category'] == 'STCG']['Realized P&L'].sum()
-        ltcg = eq_df[eq_df['Category'] == 'LTCG']['Realized P&L'].sum()
-        c1, c2 = st.columns(2)
-        c1.metric("Total STCG", f"₹{stcg:,.2f}")
-        c2.metric("Total LTCG", f"₹{ltcg:,.2f}")
-        st.dataframe(eq_df, use_container_width=True)
+        client_eq = eq_df[eq_df['PAN'] == active_pan]
+        if not client_eq.empty:
+            fys = ["All"] + sorted(client_eq['FY'].unique().tolist(), reverse=True)
+            sel_fy = st.selectbox("Filter by Financial Year", fys)
+            disp_eq = client_eq if sel_fy == "All" else client_eq[client_eq['FY'] == sel_fy]
+            
+            stcg = disp_eq[disp_eq['Category'] == 'STCG']['Realized P&L'].sum()
+            ltcg = disp_eq[disp_eq['Category'] == 'LTCG']['Realized P&L'].sum()
+            c1, c2 = st.columns(2)
+            c1.metric("Total STCG", f"₹{stcg:,.2f}")
+            c2.metric("Total LTCG", f"₹{ltcg:,.2f}")
+            st.dataframe(disp_eq, use_container_width=True)
 
 st.sidebar.divider()
 st.sidebar.download_button("⬇️ Export Master Vault", json.dumps(st.session_state.master_vault, indent=4), "vault.json", "application/json")
